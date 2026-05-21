@@ -43,7 +43,7 @@ Upload a PDF → Ask a question → Get a grounded, accurate answer in seconds.
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/YOUR_USERNAME/document-qa-bot.git
+git clone https://github.com/apekshagupta28/QnA-bot--RAG-project.git
 cd document-qa-bot
 ```
 
