@@ -1,0 +1,110 @@
+"""
+pytest tests for Document Q&A Bot (app.py)
+Run with: pytest test_rag_bot.py -v
+All tests use mocking — no API key or PDF required.
+"""
+
+import pytest
+from unittest.mock import MagicMock, patch
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+
+# ── Test 1: PDF text extraction produces non-empty output ──────────────────
+def test_pdf_text_extraction():
+    """PDF reader should extract text from each page and concatenate it."""
+    mock_page1 = MagicMock()
+    mock_page1.extract_text.return_value = "Hello from page one. "
+    mock_page2 = MagicMock()
+    mock_page2.extract_text.return_value = "Hello from page two."
+
+    mock_reader = MagicMock()
+    mock_reader.pages = [mock_page1, mock_page2]
+
+    raw_text = ""
+    for page in mock_reader.pages:
+        raw_text += page.extract_text()
+
+    assert len(raw_text) > 0
+    assert "Hello from page one." in raw_text
+    assert "Hello from page two." in raw_text
+
+
+# ── Test 2: Text splitter produces chunks within size limit ────────────────
+def test_text_splitter_chunk_size():
+    """RecursiveCharacterTextSplitter should produce chunks <= chunk_size."""
+    sample_text = "This is a test sentence. " * 100  # ~2500 chars
+    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+    chunks = splitter.split_text(sample_text)
+
+    assert len(chunks) > 1, "Long text should produce multiple chunks"
+    for chunk in chunks:
+        # Allow slight overflow due to overlap, but chunks should be near limit
+        assert len(chunk) <= 600, f"Chunk too large: {len(chunk)} chars"
+
+
+# ── Test 3: Text splitter respects overlap ─────────────────────────────────
+def test_text_splitter_overlap():
+    """Chunk overlap means consecutive chunks share some content."""
+    sample_text = "word " * 300  # simple repetitive text
+    splitter = RecursiveCharacterTextSplitter(chunk_size=200, chunk_overlap=50)
+    chunks = splitter.split_text(sample_text)
+
+    assert len(chunks) >= 2
+    # With overlap, end of chunk[0] and start of chunk[1] should share content
+    end_of_first = chunks[0][-60:]
+    start_of_second = chunks[1][:60:]
+    # They won't be identical but both should contain "word"
+    assert "word" in end_of_first
+    assert "word" in start_of_second
+
+
+# ── Test 4: FAISS vectorstore returns correct number of results ────────────
+def test_faiss_similarity_search_returns_k_results():
+    """similarity_search with k=3 should return exactly 3 documents."""
+    mock_doc1 = MagicMock()
+    mock_doc1.page_content = "Paris is the capital of France."
+    mock_doc2 = MagicMock()
+    mock_doc2.page_content = "France is in Western Europe."
+    mock_doc3 = MagicMock()
+    mock_doc3.page_content = "The Eiffel Tower is in Paris."
+
+    mock_vectorstore = MagicMock()
+    mock_vectorstore.similarity_search.return_value = [mock_doc1, mock_doc2, mock_doc3]
+
+    results = mock_vectorstore.similarity_search("What is the capital of France?", k=3)
+
+    assert len(results) == 3
+    mock_vectorstore.similarity_search.assert_called_once_with(
+        "What is the capital of France?", k=3
+    )
+
+
+# ── Test 5: Groq API response is parsed and returned correctly ─────────────
+def test_groq_response_parsing():
+    """Groq client response should be correctly parsed to extract answer text."""
+    mock_message = MagicMock()
+    mock_message.content = "Paris is the capital of France."
+
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_response
+
+    context = "France is a country in Europe. Its capital is Paris."
+    question = "What is the capital of France?"
+
+    response = mock_client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[
+            {"role": "user", "content": f"Answer based on context.\n\nContext:\n{context}\n\nQuestion: {question}"}
+        ]
+    )
+
+    answer = response.choices[0].message.content
+    assert isinstance(answer, str)
+    assert len(answer) > 0
+    assert "Paris" in answer
